@@ -1,15 +1,37 @@
 runtime: custom
-env: flex
 service: builder
+env: flex
 
 health_check:
   enable_health_check: False
 
 automatic_scaling:
-  min_num_instances: 1
-  max_num_instances: 1
+  min_num_instances: 5
+  max_num_instances: 25
+  cool_down_period_sec: 300
+  cpu_utilization:
+    target_utilization: 0.5
+
 
 resources:
-  cpu: 2
-  memory_gb: 7.5
+  cpu: 1
+  memory_gb: 2
   disk_size_gb: 10
+
+
+
+# Other links...
+
+# Test2
+# https://github.com/GoogleChrome/lighthouse/tree/master/chrome-launcher#api
+# https://github.com/GoogleChrome/lighthouse/blob/master/docs/readme.md
+# https://github.com/ebidel/lighthouse-ci/tree/master/builder
+# https://github.com/GoogleChrome/lighthouse/blob/master/docs/recipes/gulp/gulpfile.js
+
+# Test 1
+# https://stackoverflow.com/questions/23429499/stdout-buffer-issue-using-node-child-process
+# https://github.com/GoogleChrome/lighthouse
+# https://github.com/justinribeiro/lighthouse-ci
+# https://github.com/salvadormrf/lighthouse-ci
+# https://github.com/ebidel/lighthouse-ci
+# https://cloud.google.com/appengine/docs/flexible/nodejs/configuring-your-app-with-app-yaml#resource-settings

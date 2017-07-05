@@ -1,80 +1,81 @@
-FROM ubuntu:latest
+FROM debian:sid
 
-MAINTAINER Eric Bidelman <ebidel@>
+LABEL name="lighthouse-ci" \
+      maintainer="Eric Bidelman <ebidel@>" \
+      version="1.0" \
+      description="Lighthouse CI for testing all the perf things"
 
-## PART 1: Core components
+## PART 1: Define Core components
 ## =======================
 
-# Install utilities
-RUN apt-get update --fix-missing && apt-get -y upgrade &&\
-apt-get install -y sudo curl wget unzip git
+# These are base dependencies; every install needs them
+ENV deps="apt-transport-https ca-certificates curl gnupg"
 
-# Install node 6
-RUN curl -sL https://deb.nodesource.com/setup_6.x | sudo -E bash - &&\
-sudo apt-get install -y nodejs
-
-# Install Xvfb and dbus for X11
-RUN apt-get install -y xvfb dbus-x11
-
-# Install Chrome for Ubuntu
-RUN wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | sudo apt-key add - &&\
-sudo sh -c 'echo "deb http://dl.google.com/linux/chrome/deb/ stable main" >> /etc/apt/sources.list.d/google-chrome.list' &&\
-sudo apt-get update &&\
-sudo apt-get install -y google-chrome-unstable
+# Note: Uncomment if you don't want to use Headless Chrome.
+# Install Xvfb and dbus for X11 and copy xvfb init
+#ENV deps="$deps xvfb dbus-x11"
+#COPY etc/xvfb /etc/init.d/xvfb
 
 # Install imagemagick for tests [optional]
-# RUN apt-get install -y imagemagick
+#ENV deps="$deps imagemagick"
 
-# Copy key documents (except .dockerignored files)
-COPY etc/xvfb /etc/init.d/xvfb
-RUN chmod +x /etc/init.d/xvfb
+# Install git if you plan to build and install Lighthouse from source [optional]
+#ENV deps="$deps git"
 
-RUN npm --global install yarn
+## Part 2: Install Core components 
+## ===============================
 
-## PART 2: Lighthouse
-## ==================
+# This RUN command setups our base container:
+#  1. Installs our base dependencies defined in ENV $dep 
+#  2. Pulls setup for Node 6.x
+#  3. Pulls public key for Google and adds to our trust so we can authenticate the Chrome package
+#  4. Adds a sources.list called google-chrome.list so apt knows where to get the latest Chrome
+#  5. Run an apt update and install Google Chrome M59+ and Node with no-install-recommends
+#  6. Run npm to install yarn
+#  7. Purge some dependenices we know we no longer need (curl gnupg)
+#  8. Remove our cached package lists that apt made to save space
+RUN apt-get update && apt-get install -y $deps --no-install-recommends \
+  && curl -sSL https://deb.nodesource.com/setup_6.x | bash - \
+  && curl -sSL https://dl.google.com/linux/linux_signing_key.pub | apt-key add - \
+  && echo "deb [arch=amd64] https://dl.google.com/linux/chrome/deb/ stable main" > /etc/apt/sources.list.d/google-chrome.list \
+  && apt-get update && apt-get install -y \
+    google-chrome-stable \
+    nodejs \
+    --no-install-recommends \
+  && npm --global install yarn \
+  && apt-get purge --auto-remove -y curl gnupg \
+  && rm -rf /var/lib/apt/lists/*
 
-# Download lighthouse from source.
-# RUN git clone https://github.com/googlechrome/lighthouse &&\
-# cd /lighthouse &&\
-# git checkout tags/1.6.5 &&\
-# yarn install &&\
-# yarn install-all &&\
-# yarn build-all
+## PART 3: Install Lighthouse
+## ==========================
 
 # Download lighthouse from npm.
 # cache bust so we always get the latest version of LH when building the image.
 ARG CACHEBUST=1
 RUN yarn global add lighthouse
 
-## PART 3: Express server
-## ======================
+## PART 4: Setup Running Env
+## =========================
 
-# Install express
-COPY package.json /
+# Copy Express server and run scripts
+COPY ["package.json", "server.js", "chromeuser-script.sh", "entrypoint.sh", "/"]
+RUN chmod +x /*.sh
+
+# Install Express server
 RUN yarn install
+RUN npm install --only=dev lighthouse
 
-# Add the simple server file
-COPY server.js /
-RUN chmod +x /server.js
+## PART 5: Final setup
+## ===================
+
+# Add Chrome as a user
+RUN groupadd -r lighthouseci && useradd -r -g lighthouseci -G audio,video lighthouseci \
+  && mkdir -p /home/lighthouseci && chown -R lighthouseci:lighthouseci /home/lighthouseci
+
+# Run as our recently created non-privileged user
+USER lighthouseci
 
 # Expose port 8080
 EXPOSE 8080
 
-## PART 4: Final setup
-## ===================
-
-# Add a user and make it a sudo user
-RUN useradd -m chromeuser &&\
-sudo adduser chromeuser sudo
-
-# Copy the chrome-user script used to start Chrome as non-root
-COPY chromeuser-script_nonheadless.sh /
-RUN chmod +x /chromeuser-script_nonheadless.sh
-
-# Set the entrypoint
-COPY entrypoint_nonheadless.sh /
-RUN chmod +x /entrypoint_nonheadless.sh
-ENTRYPOINT ["/entrypoint_nonheadless.sh"]
-
-# CMD ["/bin/bash"]
+ENTRYPOINT ["/entrypoint.sh"]

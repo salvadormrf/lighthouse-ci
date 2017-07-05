@@ -2,106 +2,88 @@
 
 const fs = require('fs');
 const express = require('express');
-const spawn = require('child_process').spawn;
+const exec = require('child_process').exec;
 const bodyParser = require('body-parser');
 
-const API_KEY_HEADER = 'X-API-KEY';
+// const API_KEY_HEADER = 'X-API-KEY';
 const PORT = 8080;
 
-// Handler for CI.
-function runLH(url, format = 'domhtml', res, next) {
-  if (!url) {
-    res.status(400).send('Please provide a URL.');
-    return;
-  }
 
-  const extension = format === 'domhtml' ? 'html' : format;
-  const file = `report.${Date.now()}.${extension}`;
+let newPort = 9222;
 
-  const args = [`--output-path=${file}`, `--output=${format}`, '--port=9222'];
-  const child = spawn('lighthouse', [...args, url]);
+// function runLH(url, format = 'json', res, next) {
+//   if (!url) {
+//     res.status(400).send('Please provide a URL.');
+//     return;
+//   }
 
-  child.stderr.on('data', data => {
-    console.log(data.toString());
-  });
+//   newPort = newPort + 1;
+//   const file = `/tmp/report.${newPort}.${Date.now()}.${format}`;
 
-  child.on('close', statusCode => {
-    res.sendFile(`/${file}`, {}, err => {
-      if (err) {
-        next(err);
-      }
-      fs.unlink(file);
-    });
-  });
-}
+//   const chromeFlags = "--headless --disable-gpu --no-first-run --disable-translate --disable-default-apps --disable-extensions";
 
-// Serve sent event handler for https://lighthouse-ci.appspot.com/try.
-function runLighthouseAsEventStream(req, res, next) {
-  const url = req.query.url;
-  const format = req.query.format || 'domhtml';
+//   exec(`lighthouse --output-path=${file} --output=${format} --port=${newPort} --chrome-flags="${chromeFlags}" ${url}`, (err, stdout, stderr) => {
+//     if (err) {
+//       console.error(err);
+//       res.status(500).send(err);
+//       return;
+//     }
 
-  if (!url) {
-    res.status(400).send('Please provide a URL.');
-    return;
-  }
+//     // console.log(stdout);
 
-  // Send headers for event-stream connection.
-  res.writeHead(200, {
-    'Content-Type': 'text/event-stream',
-    'Cache-Control': 'no-cache',
-    'Connection': 'keep-alive',
-    'Access-Control-Allow-Origin': '*',
-    'X-Accel-Buffering': 'no' // Forces Flex App Engine to keep connection open for SSE.
-  });
+//     res.sendFile(`/${file}`, {}, err => {
+//       if (err) {
+//         next(err);
+//       }
+//       fs.unlink(file);
+//     });
+//   });
+// }
 
-  const extension = format === 'domhtml' ? 'html' : format;
-  const file = `report.${Date.now()}.${extension}`;
-  const fileSavePath = './reports/';
 
-  const args = [`--output-path=${fileSavePath + file}`, `--output=${format}`, '--port=9222'];
-  const child = spawn('lighthouse', [...args, url]);
+const lighthouse = require('lighthouse');
+const chromeLauncher = require('lighthouse/chrome-launcher');
 
-  let log = '';
-
-  child.stderr.on('data', data => {
-    const str = data.toString();
-    res.write(`data: ${str}\n\n`);
-    log += str;
-  });
-
-  child.on('close', statusCode => {
-    const serverOrigin = `https://${req.host}/`;
-    res.write(`data: done ${serverOrigin + file}\n\n`);
-    res.status(410).end();
-    console.log(log);
-    log = '';
+function launchChromeAndRunLighthouse(url, lighthouseOpts={}, launcherOpts={}, lighthouseConfig=null) {
+  return chromeLauncher.launch(launcherOpts).then(chrome => {
+    return lighthouse(url, lighthouseOpts, lighthouseConfig).then(results =>
+      chrome.kill().then(() => results));
   });
 }
+
+
 
 const app = express();
 app.use(bodyParser.json());
-app.use(express.static('reports'));
-
-// app.get('/ci', (req, res, next) => {
-//   runLH(req.query.url, req.query.format, res, next);
-// });
 
 app.post('/ci', (req, res, next) => {
-  // // Require an API key from users.
-  // if (!req.get(API_KEY_HEADER)) {
-  //   const msg = `${API_KEY_HEADER} is missing`;
-  //   const err = new Error(msg);
-  //   res.status(403).json(err.message);
-  //   return;
-  // }
+  // runLH(req.body.url, req.body.format, res, next);
+  
+  newPort = newPort + 1;
 
-  console.log(`${API_KEY_HEADER}: ${req.get(API_KEY_HEADER)}`);
+  const lighthouseOpts = {
+    output: 'json',
+    port: newPort,
+  };
+  const launcherOpts = {
+    port: newPort,
+    chromeFlags: [
+      '--headless',
+      '--disable-gpu',
+      '--no-first-run',
+      '--disable-translate',
+      '--disable-default-apps',
+      '--disable-extensions'
+    ],
+    startingUrl: 'about:blank',
+    logLevel: 'info',
+  };
+  
+  launchChromeAndRunLighthouse(req.body.url, lighthouseOpts, launcherOpts).then(results => {
+    // Use results!
+    res.send(results);
+  });
 
-  runLH(req.body.url, req.body.format, res, next);
-});
-
-app.get('/stream', (req, res, next) => {
-  runLighthouseAsEventStream(req, res, next);
 });
 
 app.listen(PORT);
